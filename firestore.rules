@@ -1,0 +1,143 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+    function myEmail() {
+      return request.auth.token.email.lower();
+    }
+    function isHouseholdMember(householdId) {
+      return isSignedIn()
+        && request.auth.uid in
+          get(/databases/$(database)/documents/households/$(householdId)).data.members;
+    }
+
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow update: if isOwner(userId)
+        // Also allow a fellow household member to clear ONLY this
+        // user's householdId, as the second half of a two-document
+        // "remove member" / "leave household" transaction. Nothing
+        // else about this document may change via this path.
+        || (
+          isSignedIn()
+          && resource.data.householdId != null
+          && request.resource.data.householdId == null
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['householdId', 'updatedAt'])
+          && request.auth.uid in
+            get(/databases/$(database)/documents/households/$(resource.data.householdId)).data.members
+        );
+      // Profile creation happens via the app on first login using the
+      // signed-in UID as the document ID — never allow creating a
+      // profile for someone else's UID.
+      allow create: if isOwner(userId);
+      allow delete: if false; // handled server-side by Cloud Functions
+      match /moments/{momentId} {
+        allow read, create, update, delete: if isOwner(userId);
+      }
+      match /plans/{planId} {
+        allow read, create, update, delete: if isOwner(userId);
+      }
+      match /people/{personId} {
+        allow read, create, update, delete: if isOwner(userId);
+      }
+      match /places/{placeId} {
+        allow read, create, update, delete: if isOwner(userId);
+      }
+      match /settings/{settingId} {
+        allow read, create, update, delete: if isOwner(userId);
+      }
+    }
+
+    // ---------------------------------------------------------------
+    // Top-level wildcard match for the invites collection-group query
+    // (watchPendingInvitesForEmail: collectionGroup('invites').where(
+    // 'email', '==', myEmail()).where('status', '==', 'pending')).
+    //
+    // Firestore does NOT use the nested `households/{id}/invites/{id}`
+    // match below for collection-group queries — it only applies to
+    // direct/subcollection access where householdId is already known.
+    // A collection-group query needs its own recursive-wildcard rule
+    // at this top level, or it falls through to the default-deny rule
+    // at the bottom of the file no matter how permissive the nested
+    // rule is. This was the actual cause of the PERMISSION_DENIED.
+    //
+    // Kept provable from the query's own filters alone (no extra
+    // get() calls), which collection-group rules require.
+    // ---------------------------------------------------------------
+    match /{path=**}/invites/{inviteId} {
+      allow read: if isSignedIn() && resource.data.email == myEmail();
+    }
+
+    match /households/{householdId} {
+      allow read: if isHouseholdMember(householdId);
+
+      // Only ever created by the app on first sign-up, as a household
+      // of exactly one (the new user themselves).
+      allow create: if isSignedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.members == [request.auth.uid];
+
+      // Existing members may update freely. A non-member may update
+      // ONLY to add themselves, and only if a pending invite addressed
+      // to their email exists on this household.
+      allow update: if isSignedIn() && (
+        request.auth.uid in resource.data.members
+        || (
+          exists(/databases/$(database)/documents/households/$(householdId)/invites/$(myEmail()))
+          && get(/databases/$(database)/documents/households/$(householdId)/invites/$(myEmail())).data.status == 'pending'
+          && !(request.auth.uid in resource.data.members)
+          && request.auth.uid in request.resource.data.members
+        )
+      );
+
+      allow delete: if false;
+
+      match /invites/{email} {
+        // `read` is handled by the top-level collection-group match
+        // above — do NOT re-add `allow read` here, it would be
+        // misleading (never evaluated for the collectionGroup query
+        // this app actually runs, and redundant for direct access
+        // since the wildcard match above already covers that too).
+        allow create: if isHouseholdMember(householdId)
+          // Guard against the email field / document-ID casing
+          // mismatch that could otherwise let an invite silently
+          // fail to match myEmail() on read.
+          && request.resource.data.email == request.resource.data.email.lower()
+          && email == request.resource.data.email;
+        // The invitee accepts by flipping status; nothing else about
+        // the invite may change.
+        allow update: if isSignedIn()
+          && myEmail() == email
+          && resource.data.status == 'pending'
+          && request.resource.data.status == 'accepted';
+        allow delete: if isHouseholdMember(householdId);
+      }
+
+      match /moments/{momentId} {
+        allow read, create, update, delete: if isHouseholdMember(householdId);
+      }
+      match /plans/{planId} {
+        allow read, create, update, delete: if isHouseholdMember(householdId);
+      }
+      match /people/{personId} {
+        allow read, create, update, delete: if isHouseholdMember(householdId);
+      }
+      match /places/{placeId} {
+        allow read, create, update, delete: if isHouseholdMember(householdId);
+      }
+      match /settings/{settingId} {
+        allow read, create, update, delete: if isHouseholdMember(householdId);
+      }
+    }
+
+    // Default deny for anything not explicitly matched above.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

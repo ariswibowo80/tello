@@ -1,0 +1,50 @@
+name: Flutter CI
+
+on:
+  push:
+    branches: [main, develop]
+    paths-ignore:
+      - 'functions/**'
+  pull_request:
+    branches: [main, develop]
+    paths-ignore:
+      - 'functions/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.0'
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Write Firebase config from secrets
+        # Do NOT echo secret values. This step materializes a
+        # firebase_options.dart from an encoded repo secret so CI never
+        # prints real config to logs. Configure FIREBASE_OPTIONS_DART_B64
+        # as a base64-encoded copy of your real firebase_options.dart.
+        if: ${{ env.FIREBASE_OPTIONS_DART_B64 != '' }}
+        env:
+          FIREBASE_OPTIONS_DART_B64: ${{ secrets.FIREBASE_OPTIONS_DART_B64 }}
+        run: echo "$FIREBASE_OPTIONS_DART_B64" | base64 -d > lib/firebase_options.dart
+
+      - name: Run formatter check
+        run: dart format --output=none --set-exit-if-changed .
+
+      - name: Run analyzer
+        run: flutter analyze
+
+      - name: Run unit and widget tests
+        run: flutter test --coverage
+
+      - name: Build debug APK
+        run: flutter build apk --debug

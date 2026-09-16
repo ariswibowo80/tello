@@ -1,0 +1,13 @@
+{
+  "name": "tello-firestore-tests",
+  "description": "Security rule tests for firestore.rules and storage.rules — run against the Firebase emulator, not deployed anywhere.",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^3.0.4",
+    "firebase": "^10.12.2"
+  }
+}

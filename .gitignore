@@ -1,0 +1,36 @@
+.dart_tool/
+.packages
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+.env
+*.iml
+.idea/
+.vscode/
+*.g.dart
+*.freezed.dart
+
+# Android
+android/local.properties
+android/key.properties
+android/app/google-services.json
+**/android/**/gradle-wrapper.jar
+
+# iOS
+ios/Flutter/Generated.xcconfig
+ios/Runner/GoogleService-Info.plist
+ios/Pods/
+
+# Firebase
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+.firebase/
+
+# --- Added by Tello setup: secrets & build artifacts, never commit ---
+macos/Runner/GoogleService-Info.plist
+android/app/*.jks
+android/app/*.keystore
+
+# Leftover nested backup folder - not part of the app, never commit
+tello-master/

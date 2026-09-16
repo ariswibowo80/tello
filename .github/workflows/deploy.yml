@@ -1,0 +1,138 @@
+name: Deploy
+
+# Triggers:
+#   - Manual: pick the environment explicitly.
+#   - Push to `develop`: auto-deploy to staging.
+#   - A `vX.Y.Z` tag: deploy to production.
+#
+# This workflow does NOT re-run lint/analyze/test itself — it relies on
+# branch protection requiring "Flutter CI" (flutter.yml) and
+# "Functions & Rules CI" (functions-ci.yml) to pass before anything can
+# reach `develop`/`main` in the first place. See README "GitHub Actions"
+# for how to configure that required-status-checks rule; chaining
+# workflow_run triggers here would be more fragile than the standard
+# GitHub-native way of gating merges.
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options: [staging, production]
+  push:
+    branches: [develop]
+    tags: ['v*.*.*']
+
+jobs:
+  determine-environment:
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.set.outputs.environment }}
+    steps:
+      - id: set
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "environment=${{ inputs.environment }}" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "environment=production" >> "$GITHUB_OUTPUT"
+          else
+            echo "environment=staging" >> "$GITHUB_OUTPUT"
+          fi
+
+  deploy-backend:
+    name: Deploy rules & Cloud Functions
+    needs: determine-environment
+    runs-on: ubuntu-latest
+    # A GitHub Environment named "staging"/"production" scopes the secrets
+    # below and (for production) can require a manual reviewer approval —
+    # configure that under Settings → Environments in the GitHub repo.
+    environment: ${{ needs.determine-environment.outputs.environment }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Install functions dependencies
+        working-directory: functions
+        run: npm ci
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+
+      - name: Deploy Firestore rules, Storage rules, and Cloud Functions
+        run: |
+          npx firebase-tools deploy \
+            --project "${{ secrets.FIREBASE_PROJECT_ID }}" \
+            --only firestore:rules,firestore:indexes,storage:rules,functions \
+            --non-interactive
+
+  build-android:
+    name: Build Android release bundle
+    needs: [determine-environment, deploy-backend]
+    runs-on: ubuntu-latest
+    environment: ${{ needs.determine-environment.outputs.environment }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.0'
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Write environment Firebase config
+        env:
+          FIREBASE_OPTIONS_DART_B64: ${{ secrets.FIREBASE_OPTIONS_DART_B64 }}
+        run: echo "$FIREBASE_OPTIONS_DART_B64" | base64 -d > lib/firebase_options.dart
+
+      # These two steps assume `flutter create .` has been run locally to
+      # generate the android/ folder (not present in this repo yet — see
+      # README "Known limitations"). Once it exists, add a release
+      # signing config to android/app/build.gradle that reads from
+      # key.properties — the standard Flutter Android release-signing
+      # setup — before this job will succeed.
+      - name: Write Android signing config
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          ANDROID_KEY_PROPERTIES: ${{ secrets.ANDROID_KEY_PROPERTIES }}
+        run: |
+          echo "$ANDROID_KEYSTORE_B64" | base64 -d > android/app/release.keystore
+          echo "$ANDROID_KEY_PROPERTIES" > android/key.properties
+
+      - name: Build release App Bundle
+        run: flutter build appbundle --release
+
+      - name: Upload App Bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tello-${{ needs.determine-environment.outputs.environment }}-${{ github.sha }}
+          path: build/app/outputs/bundle/release/app-release.aab
+          retention-days: 30
+
+      # Optional: push straight to testers instead of (or in addition to)
+      # the artifact above. Requires the app to already exist in Firebase
+      # App Distribution and a FIREBASE_ANDROID_APP_ID secret. Uncomment
+      # once that's set up.
+      # - name: Distribute to testers (staging only)
+      #   if: needs.determine-environment.outputs.environment == 'staging'
+      #   uses: wzieba/Firebase-Distribution-Github-Action@v1
+      #   with:
+      #     appId: ${{ secrets.FIREBASE_ANDROID_APP_ID }}
+      #     serviceCredentialsFileContent: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      #     groups: internal-testers
+      #     file: build/app/outputs/bundle/release/app-release.aab

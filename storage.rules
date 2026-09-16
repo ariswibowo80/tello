@@ -1,0 +1,66 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isOwner(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    function isValidMedia() {
+      return request.resource.size < 25 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*|video/.*');
+    }
+
+    // Cross-service read into Firestore to check household membership,
+    // mirroring isHouseholdMember() in firestore.rules. Storage Rules
+    // can't reuse Firestore's rules functions directly, so this is
+    // reimplemented here against the same households/{id} doc.
+    function isHouseholdMember(householdId) {
+      return request.auth != null
+        && request.auth.uid in
+          firestore.get(/databases/(default)/documents/households/$(householdId)).data.members;
+    }
+
+    // Current (post-household-migration) media paths. All members of a
+    // household can read/write/delete each other's Plan and Moment
+    // media, since these are shared once a household exists - see
+    // StoragePaths.planMedia() / momentMedia() in app_constants.dart.
+    match /households/{householdId}/moments/{momentId}/{fileName} {
+      allow read: if isHouseholdMember(householdId);
+      allow write: if isHouseholdMember(householdId) && isValidMedia();
+      allow delete: if isHouseholdMember(householdId);
+    }
+
+    match /households/{householdId}/plans/{planId}/{fileName} {
+      allow read: if isHouseholdMember(householdId);
+      allow write: if isHouseholdMember(householdId) && isValidMedia();
+      allow delete: if isHouseholdMember(householdId);
+    }
+
+    // Legacy pre-household paths, kept so any media uploaded before the
+    // households migration is still readable/deletable by its owner.
+    match /users/{userId}/moments/{momentId}/{fileName} {
+      allow read: if isOwner(userId);
+      allow write: if isOwner(userId) && isValidMedia();
+      allow delete: if isOwner(userId);
+    }
+
+    match /users/{userId}/plans/{planId}/{fileName} {
+      allow read: if isOwner(userId);
+      allow write: if isOwner(userId) && isValidMedia();
+      allow delete: if isOwner(userId);
+    }
+
+    // Profile photos stay per-user - never shared across a household.
+    match /users/{userId}/profile/{fileName} {
+      allow read: if isOwner(userId);
+      allow write: if isOwner(userId) && isValidMedia();
+      allow delete: if isOwner(userId);
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

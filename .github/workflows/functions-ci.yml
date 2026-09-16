@@ -1,0 +1,93 @@
+name: Functions & Rules CI
+
+# Separate from flutter.yml since this only needs to run when
+# functions/ or the security rules change — no point spinning up Flutter
+# for a TypeScript-only change, or Node for a Dart-only change.
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'functions/**'
+      - 'firestore-tests/**'
+      - 'firebase.json'
+      - 'firestore.rules'
+      - 'firestore.indexes.json'
+      - 'storage.rules'
+      - '.github/workflows/functions-ci.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'functions/**'
+      - 'firestore-tests/**'
+      - 'firebase.json'
+      - 'firestore.rules'
+      - 'firestore.indexes.json'
+      - 'storage.rules'
+
+jobs:
+  functions-build:
+    name: Build & load-test Cloud Functions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Install dependencies
+        working-directory: functions
+        run: npm ci
+
+      - name: Type-check and compile
+        working-directory: functions
+        run: npm run build
+
+      # Boots the real Functions emulator against the compiled output and
+      # confirms both exports (sendDailyNotifications, onUserDeleted) load
+      # without throwing — catches the class of bug `tsc` can't see, e.g.
+      # a trigger definition that's malformed at the Admin SDK level.
+      - name: Load-test compiled functions in the emulator
+        run: |
+          npx firebase-tools emulators:exec \
+            --project demo-tello-ci \
+            --only functions \
+            "echo Cloud Functions loaded successfully"
+
+  rules-test:
+    name: Test Firestore & Storage rules
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: firestore-tests/package-lock.json
+
+      - name: Install rules-test dependencies
+        working-directory: firestore-tests
+        run: npm ci
+
+      # Runs the real @firebase/rules-unit-testing suite (firestore-tests/)
+      # against live Firestore/Storage emulators — ownership checks (an
+      # owner can CRUD their own docs, another signed-in user and an
+      # unauthenticated caller both get denied), the users/{uid} no-direct-
+      # delete rule, and Storage's size/content-type validation. This
+      # could not be verified locally while building it — the emulator's
+      # rules-engine JAR downloads from storage.googleapis.com, which the
+      # sandbox environment's network policy blocked — so treat the first
+      # run of this job as the real first signal on whether it's green.
+      - name: Run rules tests against the emulator
+        run: |
+          npx firebase-tools emulators:exec \
+            --project demo-tello-rules-test \
+            --only firestore,storage \
+            "cd firestore-tests && npm test"

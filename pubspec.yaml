@@ -1,0 +1,70 @@
+name: tello
+description: "TELLO — Your Life, Told in Moments."
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+
+  # Firebase
+  firebase_core: ^4.14.0
+  firebase_auth: ^6.6.1
+  cloud_firestore: ^6.9.0
+  firebase_storage: ^13.5.0
+  firebase_messaging: ^16.6.0
+  firebase_app_check: ^0.4.7
+  firebase_analytics: ^12.5.0
+  firebase_crashlytics: ^5.3.0
+  cloud_functions: ^6.4.0
+
+  # State management / DI
+  flutter_riverpod: 2.6.1
+  riverpod_annotation: 2.6.1
+
+  # Navigation
+  go_router: ^18.0.1
+
+  # Models
+  freezed_annotation: 2.4.4
+  json_annotation: ^4.9.0
+
+  # Utilities
+  intl: ^0.20.3
+  uuid: ^4.4.0
+  google_sign_in: ^6.2.1
+  image_picker: ^1.1.1
+  cached_network_image: ^4.0.0
+  flutter_image_compress: ^2.2.0
+  geolocator: ^14.0.3
+  geocoding: 4.0.0
+  google_maps_flutter: ^2.6.1
+  share_plus: ^13.3.0
+  connectivity_plus: ^7.3.1
+  url_launcher: ^6.3.1
+  http: ^1.2.2
+  shared_preferences: ^2.2.3
+  flutter_local_notifications: ^19.4.1
+  timezone: ^0.10.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  build_runner: ^2.4.9
+  freezed: 2.5.8
+  json_serializable: ^6.8.0
+  riverpod_generator: 2.6.4
+  mocktail: ^1.0.3
+  integration_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+  # assets:
+  #   - assets/images/
+  #   - assets/icons/
