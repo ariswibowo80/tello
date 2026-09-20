@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../../core/constants/app_constants.dart';
+import '../../../../core/extensions/date_extensions.dart';
 import '../../../../core/errors/app_exception.dart';
 import '../../../../core/services/storage_providers.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -66,6 +67,7 @@ class _AddMomentScreenState extends ConsumerState<AddMomentScreen> {
 
   DateTime? _startDate;
   DateTime? _endDate;
+  TimeOfDay? _startTime;
   GeoLocation? _location;
   List<Person> _selectedPeople = [];
   final List<_PickedMedia> _media = [];
@@ -93,6 +95,10 @@ class _AddMomentScreenState extends ConsumerState<AddMomentScreen> {
       _storyController.text = existing.description ?? '';
       _startDate = existing.startDate;
       _endDate = existing.endDate;
+      // Only prefill a time if this Moment actually had one recorded -
+      // older Moments saved before time support default to midnight,
+      // which isn't a real time worth showing back to the user.
+      _startTime = existing.startDate.hasTimeSet ? TimeOfDay.fromDateTime(existing.startDate) : null;
       _location = existing.location;
       _tags = existing.tags.toSet();
       for (final item in existing.media) {
@@ -101,6 +107,9 @@ class _AddMomentScreenState extends ConsumerState<AddMomentScreen> {
       _peopleInitialized = existing.peopleIds.isEmpty;
     } else {
       _momentId = ref.read(momentRepositoryProvider).newMomentId();
+      // Default to the current time, since a Moment is usually logged
+      // around when it happened - still fully editable below.
+      _startTime = TimeOfDay.now();
     }
     _folderPath = StoragePaths.momentMedia(householdId, _momentId);
   }
@@ -223,6 +232,23 @@ class _AddMomentScreenState extends ConsumerState<AddMomentScreen> {
     if (picked != null) setState(() => _endDate = picked);
   }
 
+  Future<void> _pickStartTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _startTime ?? TimeOfDay.now(),
+      // Always show the 24-hour dial/input, regardless of the device's
+      // locale or system 12h/24h setting - consistent for everyone in
+      // the household.
+      builder: (context, child) {
+        return MediaQuery(
+          data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: true),
+          child: child!,
+        );
+      },
+    );
+    if (picked != null) setState(() => _startTime = picked);
+  }
+
   Future<void> _pickLocation() async {
     final result = await showLocationPickerSheet(context);
     if (result != null) setState(() => _location = result);
@@ -274,11 +300,14 @@ class _AddMomentScreenState extends ConsumerState<AddMomentScreen> {
     final now = DateTime.now();
     final storyText = _storyController.text.trim();
     final existing = widget.existingMoment;
+    final startDateTime = _startTime != null
+        ? DateTime(_startDate!.year, _startDate!.month, _startDate!.day, _startTime!.hour, _startTime!.minute)
+        : DateTime(_startDate!.year, _startDate!.month, _startDate!.day);
     final moment = Moment(
       id: _momentId,
       title: _titleController.text.trim(),
       description: storyText.isEmpty ? null : storyText,
-      startDate: _startDate!,
+      startDate: startDateTime,
       endDate: _endDate,
       location: _location,
       peopleIds: _selectedPeople.map((p) => p.id).toList(),
@@ -355,6 +384,23 @@ class _AddMomentScreenState extends ConsumerState<AddMomentScreen> {
                     padding: const EdgeInsets.only(top: 4),
                     child: Text(_dateErrorText!, style: const TextStyle(color: AppColors.error, fontSize: 12)),
                   ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _pickStartTime,
+                        icon: const Icon(Icons.access_time_rounded, size: 16),
+                        label: Text(_startTime == null ? 'Add time (optional)' : _startTime!.hhmm),
+                      ),
+                    ),
+                    if (_startTime != null)
+                      IconButton(
+                        icon: const Icon(Icons.close_rounded, size: 18),
+                        onPressed: () => setState(() => _startTime = null),
+                      ),
+                  ],
+                ),
                 const SizedBox(height: 12),
                 const _SectionLabel('Where?'),
                 OutlinedButton.icon(

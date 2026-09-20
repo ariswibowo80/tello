@@ -66,6 +66,13 @@ class MomentCard extends StatelessWidget {
                                     color: AppColors.primary,
                                     fontWeight: FontWeight.w700,
                                   )),
+                          if (moment.startDate.hasTimeSet) ...[
+                            const SizedBox(width: 6),
+                            Text(
+                              TimeOfDay.fromDateTime(moment.startDate).hhmm,
+                              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+                            ),
+                          ],
                           if (moment.location != null) ...[
                             const SizedBox(width: 8),
                             Expanded(child: LocationChip(name: moment.location!.name, compact: true)),

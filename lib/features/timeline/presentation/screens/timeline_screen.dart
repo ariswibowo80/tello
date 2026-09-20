@@ -7,11 +7,13 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/error_state.dart';
 import '../../../../core/widgets/loading_state.dart';
+import '../../../moments/domain/entities/moment.dart';
 import '../../../moments/presentation/widgets/moment_card.dart';
 import '../../../plans/presentation/widgets/plan_card.dart';
 import '../../domain/entities/timeline_filter.dart';
 import '../providers/moments_timeline_controller.dart';
 import '../providers/plans_timeline_controller.dart';
+import '../widgets/timeline_day_header.dart';
 import '../widgets/timeline_filter_bar.dart';
 import '../widgets/timeline_year_header.dart';
 
@@ -179,6 +181,27 @@ class _UpcomingRail extends ConsumerWidget {
   }
 }
 
+/// Groups consecutive Moments (already sorted by date from Firestore)
+/// that fall on the same calendar day. Two or more in a group get a day
+/// header and a connected-timeline look; a lone Moment on its day just
+/// renders as a plain card, same as before.
+List<List<Moment>> _groupByDay(List<Moment> items) {
+  final groups = <List<Moment>>[];
+  for (final moment in items) {
+    final day = DateTime(moment.startDate.year, moment.startDate.month, moment.startDate.day);
+    if (groups.isNotEmpty) {
+      final lastDate = groups.last.first.startDate;
+      final lastDay = DateTime(lastDate.year, lastDate.month, lastDate.day);
+      if (lastDay == day) {
+        groups.last.add(moment);
+        continue;
+      }
+    }
+    groups.add([moment]);
+  }
+  return groups;
+}
+
 class _MomentsSliver extends ConsumerWidget {
   const _MomentsSliver({required this.filter, required this.sort});
 
@@ -212,24 +235,76 @@ class _MomentsSliver extends ConsumerWidget {
 
     final children = <Widget>[];
     int? lastYear;
-    for (final moment in state.items) {
-      if (moment.startDate.year != lastYear) {
-        lastYear = moment.startDate.year;
+    for (final group in _groupByDay(state.items)) {
+      final first = group.first;
+      if (first.startDate.year != lastYear) {
+        lastYear = first.startDate.year;
         children.add(TimelineYearHeader(year: lastYear));
       }
-      children.add(Padding(
-        padding: const EdgeInsets.only(bottom: 12),
-        child: MomentCard(
-          moment: moment,
-          onTap: () => context.push('/moment/${moment.id}'),
-        ),
-      ));
+      if (group.length > 1) {
+        children.add(TimelineDayHeader(date: first.startDate, count: group.length));
+        for (var i = 0; i < group.length; i++) {
+          children.add(_DayGroupItem(
+            moment: group[i],
+            isLast: i == group.length - 1,
+            onTap: () => context.push('/moment/${group[i].id}'),
+          ));
+        }
+      } else {
+        children.add(Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: MomentCard(
+            moment: first,
+            onTap: () => context.push('/moment/${first.id}'),
+          ),
+        ));
+      }
     }
     if (state.isLoadingMore) children.add(const LoadingMoreIndicator());
 
     return SliverPadding(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
       sliver: SliverList(delegate: SliverChildListDelegate(children)),
+    );
+  }
+}
+
+/// One Moment within a same-day group, with a small connector rail
+/// (dot + line) on the left linking it to the next Moment in the group.
+class _DayGroupItem extends StatelessWidget {
+  const _DayGroupItem({required this.moment, required this.isLast, required this.onTap});
+
+  final Moment moment;
+  final bool isLast;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizedBox(
+              width: 20,
+              child: Column(
+                children: [
+                  Container(
+                    width: 10,
+                    height: 10,
+                    margin: const EdgeInsets.only(top: 6),
+                    decoration: const BoxDecoration(color: AppColors.primary, shape: BoxShape.circle),
+                  ),
+                  if (!isLast) Expanded(child: Container(width: 2, color: AppColors.divider)),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(child: MomentCard(moment: moment, onTap: onTap)),
+          ],
+        ),
+      ),
     );
   }
 }
