@@ -11,6 +11,9 @@ class FirestoreCollections {
   static const String people = 'people';
   static const String places = 'places';
   static const String settings = 'settings';
+  static const String familyMembers = 'familyMembers';
+  static const String familyAssets = 'familyAssets';
+  static const String documents = 'documents';
 }
 
 /// Firebase Storage path helpers.
@@ -24,6 +27,12 @@ class StoragePaths {
       'households/$householdId/plans/$planId';
 
   static String profilePhoto(String userId) => 'users/$userId/profile';
+
+  static String familyMemberFiles(String householdId, String memberId) =>
+      'households/$householdId/familyMembers/$memberId';
+
+  static String familyAssetFiles(String householdId, String assetId) =>
+      'households/$householdId/familyAssets/$assetId';
 }
 
 /// Plan lifecycle states.
@@ -59,6 +68,13 @@ class AppLimits {
   static const int maxItineraryItems = 100;
   static const int momentsPageSize = 20;
   static const int plansPageSize = 20;
+  static const int maxDocumentsPerParent = 50;
+
+  /// How many days before a document's expiry date the first local
+  /// reminder fires. A second reminder fires [documentExpiryReminderDaysClose]
+  /// before, for anything already past the first window when it's added.
+  static const int documentExpiryReminderDaysFar = 30;
+  static const int documentExpiryReminderDaysClose = 7;
 }
 
 class AppTags {

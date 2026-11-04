@@ -171,6 +171,19 @@ remains is confirming all of the above actually passes somewhere with a
 real Flutter/Firebase/Node runtime — see "Recommended next development
 steps."
 
+- **Family & Assets (post-launch addition):** a new household-scoped
+  feature, reached from Profile → "Keluarga & Aset", for storing family
+  member profiles (name, relationship, birth date, notes, photo) and
+  family-owned assets (rumah, kendaraan, tanah, ...), each with its own
+  **documents** subcollection — a scanned photo or PDF (KTP, KK, akta
+  lahir, STNK, BPKB, sertifikat, polis asuransi, ...) with an optional
+  expiry date. Shared across the household like Moments/Plans. Documents
+  with an expiry date get two local reminders (30 and 7 days before,
+  scheduled client-side via `flutter_local_notifications` zonedSchedule
+  — no Cloud Function involved). PDFs open in an external viewer
+  (`url_launcher`) rather than in-app, since there's no in-app PDF
+  renderer in this project yet.
+
 ## Architecture
 
 Feature-first Clean Architecture:
@@ -189,6 +202,7 @@ lib/
     on_this_day/
     life_review/
     profile/
+    family/       # family members + assets, each with a documents subcollection
   firebase_options.dart
   main.dart
 test/

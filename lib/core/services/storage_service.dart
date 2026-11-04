@@ -18,6 +18,21 @@ class MediaUploadTask {
   final Future<MediaItem> result;
 }
 
+/// Where a document file ended up after upload — just enough to build a
+/// [FamilyDocument] (no thumbnail; scanned IDs/PDFs don't need one).
+class DocumentUploadResult {
+  const DocumentUploadResult({required this.url, required this.storagePath, required this.isPdf});
+  final String url;
+  final String storagePath;
+  final bool isPdf;
+}
+
+class DocumentUploadTask {
+  DocumentUploadTask({required this.progress, required this.result});
+  final Stream<double> progress;
+  final Future<DocumentUploadResult> result;
+}
+
 /// Handles compression, thumbnail generation, and upload of photos/videos
 /// to Firebase Storage. Kept out of repositories/widgets so Moments and
 /// Plans share one implementation of "attach media to a thing".
@@ -138,6 +153,64 @@ class StorageService {
     }
 
     return MediaUploadTask(progress: controller.stream, result: run());
+  }
+
+  /// Uploads a family/asset document file — a compressed JPEG if [isPdf]
+  /// is false (reusing the same compression path as [uploadImage], since
+  /// a photographed KTP/STNK is still just a photo), or the raw PDF bytes
+  /// otherwise. No thumbnail is generated either way.
+  DocumentUploadTask uploadDocument({required File file, required String folderPath, required bool isPdf}) {
+    final controller = StreamController<double>.broadcast();
+    final id = _uuid.v4();
+
+    Future<DocumentUploadResult> run() async {
+      try {
+        return await _withRetry(() async {
+          final Uint8List bytes;
+          final String extension;
+          final String contentType;
+
+          if (isPdf) {
+            bytes = Uint8List.fromList(await file.readAsBytes());
+            extension = 'pdf';
+            contentType = 'application/pdf';
+          } else {
+            bytes = Uint8List.fromList(
+              await FlutterImageCompress.compressWithFile(
+                    file.absolute.path,
+                    quality: 85,
+                    minWidth: 1600,
+                    minHeight: 1600,
+                  ) ??
+                  await file.readAsBytes(),
+            );
+            extension = 'jpg';
+            contentType = 'image/jpeg';
+          }
+
+          if (bytes.lengthInBytes > maxUploadBytes) {
+            throw const ValidationException('That file is too large. Please choose a smaller file.');
+          }
+
+          final ref = _storage.ref('$folderPath/$id.$extension');
+          final uploadTask = ref.putData(bytes, SettableMetadata(contentType: contentType));
+          final progressSub = uploadTask.snapshotEvents.listen((snapshot) {
+            if (snapshot.totalBytes > 0 && !controller.isClosed) {
+              controller.add(snapshot.bytesTransferred / snapshot.totalBytes);
+            }
+          });
+          await uploadTask;
+          await progressSub.cancel();
+
+          final url = await ref.getDownloadURL();
+          return DocumentUploadResult(url: url, storagePath: ref.fullPath, isPdf: isPdf);
+        });
+      } finally {
+        await controller.close();
+      }
+    }
+
+    return DocumentUploadTask(progress: controller.stream, result: run());
   }
 
   Future<void> deleteMedia(String storagePath) async {

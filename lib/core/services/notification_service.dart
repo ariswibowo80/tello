@@ -3,6 +3,8 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:go_router/go_router.dart';
+import 'package:timezone/data/latest_all.dart' as tz_data;
+import 'package:timezone/timezone.dart' as tz;
 
 import '../constants/app_constants.dart';
 
@@ -32,6 +34,13 @@ class NotificationService {
   Future<void> initialize({required GlobalKey<NavigatorState> navigatorKey}) async {
     if (_initialized) return;
     _initialized = true;
+
+    // Only used for document-expiry reminders (scheduled client-side via
+    // zonedSchedule below) — Plan/On-This-Day pushes stay server-driven
+    // via Cloud Functions. Left at the UTC default rather than detecting
+    // the device's IANA zone (no package for that here); harmless for
+    // day-granularity reminders like these.
+    tz_data.initializeTimeZones();
 
     await _localNotifications
         .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
@@ -99,6 +108,69 @@ class NotificationService {
       ),
       payload: message.data['route'] as String?,
     );
+  }
+
+  /// Schedules local "this document is about to expire" reminders —
+  /// [AppLimits.documentExpiryReminderDaysFar] and
+  /// [AppLimits.documentExpiryReminderDaysClose] days before [expiryDate].
+  /// Any reminder date already in the past is silently skipped (e.g. a
+  /// document added with an expiry less than 7 days out only gets the
+  /// close one, or none at all if it's already overdue). Call
+  /// [cancelDocumentExpiryReminders] first when editing a document's
+  /// expiry date, to avoid stale duplicate reminders.
+  Future<void> scheduleDocumentExpiryReminders({
+    required String documentId,
+    required String documentTitle,
+    required DateTime expiryDate,
+  }) async {
+    final baseId = documentId.hashCode;
+    final reminders = [
+      (
+        id: baseId,
+        fireAt: expiryDate.subtract(const Duration(days: AppLimits.documentExpiryReminderDaysFar)),
+        body: '$documentTitle akan kedaluwarsa dalam ${AppLimits.documentExpiryReminderDaysFar} hari.',
+      ),
+      (
+        id: baseId + 1,
+        fireAt: expiryDate.subtract(const Duration(days: AppLimits.documentExpiryReminderDaysClose)),
+        body: '$documentTitle akan kedaluwarsa dalam ${AppLimits.documentExpiryReminderDaysClose} hari.',
+      ),
+    ];
+
+    for (final reminder in reminders) {
+      if (reminder.fireAt.isBefore(DateTime.now())) continue;
+      await _localNotifications.zonedSchedule(
+        reminder.id,
+        'Dokumen akan kedaluwarsa',
+        reminder.body,
+        tz.TZDateTime.from(reminder.fireAt, tz.local),
+        NotificationDetails(
+          android: AndroidNotificationDetails(
+            _channel.id,
+            _channel.name,
+            channelDescription: _channel.description,
+            importance: Importance.high,
+            priority: Priority.high,
+          ),
+          iOS: const DarwinNotificationDetails(),
+        ),
+        androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+        // Raw path string rather than AppRoutes.family — this service is
+        // route-agnostic (see _handleTap/_navigate above, which also take
+        // raw path strings from Cloud Functions push payloads) and
+        // shouldn't import the router.
+        payload: '/family',
+      );
+    }
+  }
+
+  /// Cancels both reminders for [documentId], if scheduled. Safe to call
+  /// even if nothing was ever scheduled for it (deleted plugin-side as a
+  /// no-op).
+  Future<void> cancelDocumentExpiryReminders(String documentId) async {
+    final baseId = documentId.hashCode;
+    await _localNotifications.cancel(baseId);
+    await _localNotifications.cancel(baseId + 1);
   }
 
   void _handleTap(GlobalKey<NavigatorState> navigatorKey, RemoteMessage message) {

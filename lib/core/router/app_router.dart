@@ -6,6 +6,13 @@ import '../../features/auth/presentation/providers/auth_providers.dart';
 import '../../features/household/presentation/providers/household_providers.dart';
 import '../../features/auth/presentation/screens/login_screen.dart';
 import '../../features/auth/presentation/screens/onboarding_screen.dart';
+import '../../features/family/domain/entities/family_asset.dart';
+import '../../features/family/domain/entities/family_member.dart';
+import '../../features/family/presentation/screens/family_asset_detail_screen.dart';
+import '../../features/family/presentation/screens/family_asset_form_screen.dart';
+import '../../features/family/presentation/screens/family_home_screen.dart';
+import '../../features/family/presentation/screens/family_member_detail_screen.dart';
+import '../../features/family/presentation/screens/family_member_form_screen.dart';
 import '../../features/life_review/presentation/screens/life_review_screen.dart';
 import '../../features/moments/domain/entities/moment.dart';
 import '../../features/moments/presentation/screens/add_moment_screen.dart';
@@ -48,6 +55,11 @@ class AppRoutes {
   static const onThisDay = '/on-this-day';
   static const notificationSettings = '/notification-settings';
   static const lifeReview = '/life-review';
+  static const family = '/family';
+  static const familyMemberForm = '/family/member-form';
+  static const familyMemberDetail = '/family/member/:id';
+  static const familyAssetForm = '/family/asset-form';
+  static const familyAssetDetail = '/family/asset/:id';
 }
 
 /// Shown only for the brief moment before the first auth state is known.
@@ -179,6 +191,26 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.lifeReview,
         builder: (context, state) => const LifeReviewScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.family,
+        builder: (context, state) => const FamilyHomeScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.familyMemberForm,
+        builder: (context, state) => FamilyMemberFormScreen(existingMember: state.extra as FamilyMember?),
+      ),
+      GoRoute(
+        path: AppRoutes.familyMemberDetail,
+        builder: (context, state) => FamilyMemberDetailScreen(memberId: state.pathParameters['id']!),
+      ),
+      GoRoute(
+        path: AppRoutes.familyAssetForm,
+        builder: (context, state) => FamilyAssetFormScreen(existingAsset: state.extra as FamilyAsset?),
+      ),
+      GoRoute(
+        path: AppRoutes.familyAssetDetail,
+        builder: (context, state) => FamilyAssetDetailScreen(assetId: state.pathParameters['id']!),
       ),
     ],
   );

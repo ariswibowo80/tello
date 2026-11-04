@@ -12,6 +12,13 @@ service firebase.storage {
         && request.resource.contentType.matches('image/.*|video/.*');
     }
 
+    // Family member / asset documents: photos of physical paperwork, or a
+    // scanned PDF. No video needed here.
+    function isValidDocumentFile() {
+      return request.resource.size < 25 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*|application/pdf');
+    }
+
     // Cross-service read into Firestore to check household membership,
     // mirroring isHouseholdMember() in firestore.rules. Storage Rules
     // can't reuse Firestore's rules functions directly, so this is
@@ -35,6 +42,18 @@ service firebase.storage {
     match /households/{householdId}/plans/{planId}/{fileName} {
       allow read: if isHouseholdMember(householdId);
       allow write: if isHouseholdMember(householdId) && isValidMedia();
+      allow delete: if isHouseholdMember(householdId);
+    }
+
+    match /households/{householdId}/familyMembers/{memberId}/{fileName} {
+      allow read: if isHouseholdMember(householdId);
+      allow write: if isHouseholdMember(householdId) && isValidDocumentFile();
+      allow delete: if isHouseholdMember(householdId);
+    }
+
+    match /households/{householdId}/familyAssets/{assetId}/{fileName} {
+      allow read: if isHouseholdMember(householdId);
+      allow write: if isHouseholdMember(householdId) && isValidDocumentFile();
       allow delete: if isHouseholdMember(householdId);
     }
 

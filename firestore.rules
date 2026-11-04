@@ -133,6 +133,18 @@ service cloud.firestore {
       match /settings/{settingId} {
         allow read, create, update, delete: if isHouseholdMember(householdId);
       }
+      match /familyMembers/{memberId} {
+        allow read, create, update, delete: if isHouseholdMember(householdId);
+        match /documents/{documentId} {
+          allow read, create, update, delete: if isHouseholdMember(householdId);
+        }
+      }
+      match /familyAssets/{assetId} {
+        allow read, create, update, delete: if isHouseholdMember(householdId);
+        match /documents/{documentId} {
+          allow read, create, update, delete: if isHouseholdMember(householdId);
+        }
+      }
     }
 
     // Default deny for anything not explicitly matched above.
