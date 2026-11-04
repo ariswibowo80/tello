@@ -424,6 +424,14 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 ),
               ),
               const Divider(),
+              ListTile(
+                leading: const Icon(Icons.family_restroom_rounded),
+                title: const Text('Keluarga & Aset'),
+                subtitle: const Text('Anggota keluarga, rumah, kendaraan, dan dokumennya'),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: () => context.push(AppRoutes.family),
+              ),
+              const Divider(),
               Consumer(
                 builder: (context, ref, _) {
                   final invites = ref.watch(pendingInvitesProvider).valueOrNull ?? const [];
@@ -506,14 +514,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                     onTap: _leaveHousehold,
                   );
                 },
-              ),
-              const Divider(),
-              ListTile(
-                leading: const Icon(Icons.family_restroom_rounded),
-                title: const Text('Keluarga & Aset'),
-                subtitle: const Text('Anggota keluarga, rumah, kendaraan, dan dokumennya'),
-                trailing: const Icon(Icons.chevron_right_rounded),
-                onTap: () => context.push(AppRoutes.family),
               ),
               const Divider(),
               ListTile(

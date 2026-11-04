@@ -9,6 +9,7 @@ import 'package:intl/intl.dart';
 import '../../../../core/errors/app_exception.dart';
 import '../../../../core/services/notification_service.dart';
 import '../../../../core/services/storage_providers.dart';
+import '../../../../core/services/storage_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../domain/entities/family_document.dart';
 import '../../domain/repositories/family_document_repository.dart';
@@ -55,6 +56,7 @@ class _DocumentFormSheet extends ConsumerStatefulWidget {
 
 class _DocumentFormSheetState extends ConsumerState<_DocumentFormSheet> {
   final _titleController = TextEditingController();
+  final _customTypeController = TextEditingController();
   String? _docType;
   DateTime? _expiryDate;
 
@@ -62,38 +64,92 @@ class _DocumentFormSheetState extends ConsumerState<_DocumentFormSheet> {
   bool _pickedIsPdf = false;
   double? _uploadProgress;
   String? _uploadError;
+  DocumentUploadResult? _uploadedResult;
   bool _isSaving = false;
 
   @override
   void dispose() {
     _titleController.dispose();
+    _customTypeController.dispose();
     super.dispose();
   }
 
-  bool get _isUploading => _pickedFile != null && _uploadProgress != null && _uploadProgress! < 1;
+  bool get _isUploading => _pickedFile != null && _uploadedResult == null && _uploadError == null;
+
+  static const String _otherPreset = 'Lainnya';
+
+  /// The docType actually saved — the custom text typed under "Lainnya"
+  /// when there is one, otherwise whichever chip is selected.
+  String? get _resolvedDocType {
+    if (_docType == _otherPreset) {
+      final custom = _customTypeController.text.trim();
+      return custom.isEmpty ? _otherPreset : custom;
+    }
+    return _docType;
+  }
 
   Future<void> _pickFromCamera() async {
     final xfile = await ImagePicker().pickImage(source: ImageSource.camera);
-    if (xfile != null) _setPickedFile(File(xfile.path), isPdf: false);
+    if (xfile != null) _startUpload(File(xfile.path), isPdf: false);
   }
 
   Future<void> _pickFromGallery() async {
     final xfile = await ImagePicker().pickImage(source: ImageSource.gallery);
-    if (xfile != null) _setPickedFile(File(xfile.path), isPdf: false);
+    if (xfile != null) _startUpload(File(xfile.path), isPdf: false);
   }
 
   Future<void> _pickPdf() async {
     final file = await FilePicker.pickFile(type: FileType.custom, allowedExtensions: ['pdf']);
     final path = file?.path;
-    if (path != null) _setPickedFile(File(path), isPdf: true);
+    if (path != null) _startUpload(File(path), isPdf: true);
   }
 
-  void _setPickedFile(File file, {required bool isPdf}) {
+  /// Uploading begins the instant a file is picked — not deferred to the
+  /// Simpan tap — since Simpan is disabled while [_isUploading] is true.
+  /// Deferring the actual upload call to `_save()` would deadlock: the
+  /// button would stay disabled forever because nothing had kicked off
+  /// the work that clears that state.
+  void _startUpload(File file, {required bool isPdf}) {
     setState(() {
       _pickedFile = file;
       _pickedIsPdf = isPdf;
       _uploadProgress = 0;
       _uploadError = null;
+      _uploadedResult = null;
+    });
+
+    final storage = ref.read(storageServiceProvider);
+    final task = storage.uploadDocument(file: file, folderPath: widget.folderPath, isPdf: isPdf);
+
+    task.progress.listen((p) {
+      if (mounted) setState(() => _uploadProgress = p);
+    });
+
+    task.result.then((result) {
+      if (!mounted) return;
+      setState(() {
+        _uploadProgress = 1;
+        _uploadedResult = result;
+      });
+    }).catchError((Object e) {
+      if (!mounted) return;
+      setState(() => _uploadError = e is AppException ? e.message : 'Upload gagal. Silakan coba lagi.');
+    });
+  }
+
+  void _removePickedFile() {
+    // Best-effort cleanup if the upload already finished — nothing else
+    // references this file since it was never attached to a saved
+    // FamilyDocument.
+    final uploaded = _uploadedResult;
+    if (uploaded != null) {
+      ref.read(storageServiceProvider).deleteMedia(uploaded.storagePath);
+    }
+    setState(() {
+      _pickedFile = null;
+      _uploadProgress = null;
+      _uploadError = null;
+      _uploadedResult = null;
     });
   }
 
@@ -108,9 +164,9 @@ class _DocumentFormSheetState extends ConsumerState<_DocumentFormSheet> {
   }
 
   Future<void> _save() async {
-    final file = _pickedFile;
-    final docType = _docType;
-    if (file == null) {
+    final uploaded = _uploadedResult;
+    final docType = _resolvedDocType;
+    if (uploaded == null) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Pilih foto atau file PDF dulu.')));
       return;
     }
@@ -122,13 +178,6 @@ class _DocumentFormSheetState extends ConsumerState<_DocumentFormSheet> {
     setState(() => _isSaving = true);
 
     try {
-      final storage = ref.read(storageServiceProvider);
-      final task = storage.uploadDocument(file: file, folderPath: widget.folderPath, isPdf: _pickedIsPdf);
-      task.progress.listen((p) {
-        if (mounted) setState(() => _uploadProgress = p);
-      });
-      final uploaded = await task.result;
-
       final docRepo = ref.read(familyDocumentRepositoryProvider);
       final title = _titleController.text.trim().isEmpty ? docType : _titleController.text.trim();
       final document = FamilyDocument(
@@ -219,13 +268,7 @@ class _DocumentFormSheetState extends ConsumerState<_DocumentFormSheet> {
                           : null,
                   trailing: IconButton(
                     icon: const Icon(Icons.close_rounded),
-                    onPressed: _isSaving
-                        ? null
-                        : () => setState(() {
-                              _pickedFile = null;
-                              _uploadProgress = null;
-                              _uploadError = null;
-                            }),
+                    onPressed: _isSaving ? null : _removePickedFile,
                   ),
                 ),
               ),
@@ -247,6 +290,16 @@ class _DocumentFormSheetState extends ConsumerState<_DocumentFormSheet> {
                   ),
               ],
             ),
+            if (_docType == _otherPreset) ...[
+              const SizedBox(height: 10),
+              TextField(
+                controller: _customTypeController,
+                decoration: const InputDecoration(
+                  labelText: 'Jenis dokumen',
+                  hintText: 'misal: Surat Nikah, NPWP',
+                ),
+              ),
+            ],
             const SizedBox(height: 12),
             OutlinedButton.icon(
               onPressed: _pickExpiryDate,

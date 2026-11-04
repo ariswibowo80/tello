@@ -56,7 +56,7 @@ class StorageService {
     Future<MediaItem> run() async {
       try {
         return await _withRetry(() async {
-          final fullBytes = await FlutterImageCompress.compressWithFile(
+          final fullBytes = await _compressImageSafely(
                 file.absolute.path,
                 quality: 82,
                 minWidth: 1600,
@@ -69,7 +69,7 @@ class StorageService {
                 "That photo is too large, even after compression. Please choose a smaller file.");
           }
 
-          final thumbBytes = await FlutterImageCompress.compressWithFile(
+          final thumbBytes = await _compressImageSafely(
                 file.absolute.path,
                 quality: 60,
                 minWidth: 320,
@@ -176,7 +176,7 @@ class StorageService {
             contentType = 'application/pdf';
           } else {
             bytes = Uint8List.fromList(
-              await FlutterImageCompress.compressWithFile(
+              await _compressImageSafely(
                     file.absolute.path,
                     quality: 85,
                     minWidth: 1600,
@@ -221,6 +221,33 @@ class StorageService {
       if (e.code != 'object-not-found') {
         throw mapFirebaseErrorCode(e.code, cause: e);
       }
+    }
+  }
+
+  /// Wraps [FlutterImageCompress.compressWithFile] with a timeout.
+  /// On some devices/OS versions (seen on Android 16 / API 36 in the
+  /// field) the native compressor call never returns — no error, no
+  /// crash, the method channel simply never completes — which otherwise
+  /// leaves the upload stuck forever with no way for the person to
+  /// recover short of force-closing the app. Falling back to null here
+  /// behaves exactly like compression legitimately declining to compress
+  /// (e.g. an already-small image): callers already fall back to the
+  /// uncompressed file bytes in that case.
+  Future<Uint8List?> _compressImageSafely(
+    String path, {
+    required int quality,
+    required int minWidth,
+    required int minHeight,
+  }) async {
+    try {
+      return await FlutterImageCompress.compressWithFile(
+        path,
+        quality: quality,
+        minWidth: minWidth,
+        minHeight: minHeight,
+      ).timeout(const Duration(seconds: 12));
+    } on TimeoutException {
+      return null;
     }
   }
 
