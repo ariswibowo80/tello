@@ -47,7 +47,9 @@ class FamilyAssetDetailScreen extends ConsumerWidget {
       await ref
           .read(familyDocumentRepositoryProvider)
           .deleteDocument(DocumentParentType.familyAsset, assetId, document.id);
-      await ref.read(storageServiceProvider).deleteMedia(document.storagePath);
+      for (final file in document.files) {
+        await ref.read(storageServiceProvider).deleteMedia(file.storagePath);
+      }
       await NotificationService.instance.cancelDocumentExpiryReminders(document.id);
     } on AppException catch (e) {
       if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
@@ -75,7 +77,9 @@ class FamilyAssetDetailScreen extends ConsumerWidget {
       final documents = ref.read(familyDocumentsProvider((DocumentParentType.familyAsset, asset.id))).valueOrNull ??
           const <FamilyDocument>[];
       for (final doc in documents) {
-        await ref.read(storageServiceProvider).deleteMedia(doc.storagePath);
+        for (final file in doc.files) {
+          await ref.read(storageServiceProvider).deleteMedia(file.storagePath);
+        }
         await NotificationService.instance.cancelDocumentExpiryReminders(doc.id);
       }
       await ref.read(familyAssetRepositoryProvider).deleteAsset(asset.id);

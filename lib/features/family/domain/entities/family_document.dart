@@ -30,18 +30,36 @@ class DocumentTypePresets {
 
 enum DocumentFileKind { image, pdf }
 
-/// A single scanned/photographed document attached to a [FamilyMember] or
-/// a [FamilyAsset] — e.g. a KTP photo or a scanned STNK PDF. Lives in a
-/// `documents` subcollection under its parent, scoped to the household
-/// the same way Moments/Plans are.
+/// One uploaded file (photo or PDF page) within a [FamilyDocument] — a
+/// KTP, for instance, is usually two of these (front + back).
+class DocumentFile {
+  const DocumentFile({required this.url, required this.storagePath, required this.kind});
+
+  final String url;
+  final String storagePath;
+  final DocumentFileKind kind;
+
+  factory DocumentFile.fromMap(Map<String, dynamic> map) => DocumentFile(
+        url: map['url'] as String? ?? '',
+        storagePath: map['storagePath'] as String? ?? '',
+        kind: (map['kind'] as String?) == 'pdf' ? DocumentFileKind.pdf : DocumentFileKind.image,
+      );
+
+  Map<String, dynamic> toMap() => {'url': url, 'storagePath': storagePath, 'kind': kind.name};
+}
+
+/// A scanned/photographed document attached to a [FamilyMember] or a
+/// [FamilyAsset] — e.g. a KTP (front + back) or a scanned STNK PDF. One
+/// [FamilyDocument] can hold several [files] (multiple photos or pages
+/// that together make up "the KTP"). Lives in a `documents` subcollection
+/// under its parent, scoped to the household the same way Moments/Plans
+/// are.
 class FamilyDocument {
   const FamilyDocument({
     required this.id,
     required this.title,
     required this.docType,
-    required this.fileUrl,
-    required this.storagePath,
-    required this.fileKind,
+    required this.files,
     this.expiryDate,
     this.notes,
     required this.createdAt,
@@ -50,9 +68,7 @@ class FamilyDocument {
   final String id;
   final String title;
   final String docType;
-  final String fileUrl;
-  final String storagePath;
-  final DocumentFileKind fileKind;
+  final List<DocumentFile> files;
   final DateTime? expiryDate;
   final String? notes;
   final DateTime createdAt;
@@ -66,13 +82,30 @@ class FamilyDocument {
   }
 
   factory FamilyDocument.fromFirestore(String id, Map<String, dynamic> map) {
+    List<DocumentFile> files;
+    if (map['files'] is List) {
+      files = (map['files'] as List)
+          .map((f) => DocumentFile.fromMap(Map<String, dynamic>.from(f as Map)))
+          .toList();
+    } else if (map['fileUrl'] != null) {
+      // Documents created before multi-file support stored a single file
+      // directly on the document — read those as a one-file list.
+      files = [
+        DocumentFile(
+          url: map['fileUrl'] as String? ?? '',
+          storagePath: map['storagePath'] as String? ?? '',
+          kind: (map['fileKind'] as String?) == 'pdf' ? DocumentFileKind.pdf : DocumentFileKind.image,
+        ),
+      ];
+    } else {
+      files = const [];
+    }
+
     return FamilyDocument(
       id: id,
       title: map['title'] as String? ?? '',
       docType: map['docType'] as String? ?? '',
-      fileUrl: map['fileUrl'] as String? ?? '',
-      storagePath: map['storagePath'] as String? ?? '',
-      fileKind: (map['fileKind'] as String?) == 'pdf' ? DocumentFileKind.pdf : DocumentFileKind.image,
+      files: files,
       expiryDate: (map['expiryDate'] as Timestamp?)?.toDate(),
       notes: map['notes'] as String?,
       createdAt: (map['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
@@ -82,9 +115,7 @@ class FamilyDocument {
   Map<String, dynamic> toFirestore() => {
         'title': title,
         'docType': docType,
-        'fileUrl': fileUrl,
-        'storagePath': storagePath,
-        'fileKind': fileKind.name,
+        'files': files.map((f) => f.toMap()).toList(),
         'expiryDate': expiryDate != null ? Timestamp.fromDate(expiryDate!) : null,
         'notes': notes,
         'createdAt': FieldValue.serverTimestamp(),

@@ -5,12 +5,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../../../core/errors/app_exception.dart';
 import '../../../../core/services/notification_service.dart';
 import '../../../../core/services/storage_providers.dart';
 import '../../../../core/services/storage_service.dart';
-import '../../../../core/theme/app_colors.dart';
+import '../../../../core/widgets/media_grid.dart';
 import '../../domain/entities/family_document.dart';
 import '../../domain/repositories/family_document_repository.dart';
 import '../providers/family_document_providers.dart';
@@ -37,6 +38,16 @@ Future<void> showDocumentFormSheet(
   );
 }
 
+class _PickedFile {
+  _PickedFile({required this.id, required this.file, required this.isPdf});
+  final String id;
+  final File file;
+  final bool isPdf;
+  double progress = 0;
+  DocumentUploadResult? uploaded;
+  String? error;
+}
+
 class _DocumentFormSheet extends ConsumerStatefulWidget {
   const _DocumentFormSheet({
     required this.parentType,
@@ -59,12 +70,7 @@ class _DocumentFormSheetState extends ConsumerState<_DocumentFormSheet> {
   final _customTypeController = TextEditingController();
   String? _docType;
   DateTime? _expiryDate;
-
-  File? _pickedFile;
-  bool _pickedIsPdf = false;
-  double? _uploadProgress;
-  String? _uploadError;
-  DocumentUploadResult? _uploadedResult;
+  final List<_PickedFile> _pickedFiles = [];
   bool _isSaving = false;
 
   @override
@@ -74,7 +80,9 @@ class _DocumentFormSheetState extends ConsumerState<_DocumentFormSheet> {
     super.dispose();
   }
 
-  bool get _isUploading => _pickedFile != null && _uploadedResult == null && _uploadError == null;
+  bool get _isUploadingAny => _pickedFiles.any((f) => f.uploaded == null && f.error == null);
+  bool get _hasErrors => _pickedFiles.any((f) => f.error != null);
+  List<_PickedFile> get _successfulFiles => _pickedFiles.where((f) => f.uploaded != null).toList();
 
   static const String _otherPreset = 'Lainnya';
 
@@ -94,63 +102,57 @@ class _DocumentFormSheetState extends ConsumerState<_DocumentFormSheet> {
   }
 
   Future<void> _pickFromGallery() async {
-    final xfile = await ImagePicker().pickImage(source: ImageSource.gallery);
-    if (xfile != null) _startUpload(File(xfile.path), isPdf: false);
+    final picked = await ImagePicker().pickMultiImage();
+    for (final xfile in picked) {
+      _startUpload(File(xfile.path), isPdf: false);
+    }
   }
 
   Future<void> _pickPdf() async {
-    final file = await FilePicker.pickFile(type: FileType.custom, allowedExtensions: ['pdf']);
-    final path = file?.path;
-    if (path != null) _startUpload(File(path), isPdf: true);
+    final files = await FilePicker.pickFiles(type: FileType.custom, allowedExtensions: ['pdf']);
+    for (final platformFile in files) {
+      final path = platformFile.path;
+      if (path != null) _startUpload(File(path), isPdf: true);
+    }
   }
 
   /// Uploading begins the instant a file is picked — not deferred to the
-  /// Simpan tap — since Simpan is disabled while [_isUploading] is true.
-  /// Deferring the actual upload call to `_save()` would deadlock: the
-  /// button would stay disabled forever because nothing had kicked off
-  /// the work that clears that state.
+  /// Simpan tap — since Simpan is disabled while any file is still
+  /// uploading. Deferring the actual upload call to `_save()` would
+  /// deadlock: the button would stay disabled forever because nothing
+  /// had kicked off the work that clears that state.
   void _startUpload(File file, {required bool isPdf}) {
-    setState(() {
-      _pickedFile = file;
-      _pickedIsPdf = isPdf;
-      _uploadProgress = 0;
-      _uploadError = null;
-      _uploadedResult = null;
-    });
+    final entry = _PickedFile(id: const Uuid().v4(), file: file, isPdf: isPdf);
+    setState(() => _pickedFiles.add(entry));
 
     final storage = ref.read(storageServiceProvider);
     final task = storage.uploadDocument(file: file, folderPath: widget.folderPath, isPdf: isPdf);
 
     task.progress.listen((p) {
-      if (mounted) setState(() => _uploadProgress = p);
+      if (mounted) setState(() => entry.progress = p);
     });
 
     task.result.then((result) {
       if (!mounted) return;
       setState(() {
-        _uploadProgress = 1;
-        _uploadedResult = result;
+        entry.progress = 1;
+        entry.uploaded = result;
       });
     }).catchError((Object e) {
       if (!mounted) return;
-      setState(() => _uploadError = e is AppException ? e.message : 'Upload gagal. Silakan coba lagi.');
+      setState(() => entry.error = e is AppException ? e.message : 'Upload gagal. Silakan coba lagi.');
     });
   }
 
-  void _removePickedFile() {
+  void _removeFile(_PickedFile entry) {
+    setState(() => _pickedFiles.remove(entry));
     // Best-effort cleanup if the upload already finished — nothing else
     // references this file since it was never attached to a saved
     // FamilyDocument.
-    final uploaded = _uploadedResult;
+    final uploaded = entry.uploaded;
     if (uploaded != null) {
       ref.read(storageServiceProvider).deleteMedia(uploaded.storagePath);
     }
-    setState(() {
-      _pickedFile = null;
-      _uploadProgress = null;
-      _uploadError = null;
-      _uploadedResult = null;
-    });
   }
 
   Future<void> _pickExpiryDate() async {
@@ -164,9 +166,9 @@ class _DocumentFormSheetState extends ConsumerState<_DocumentFormSheet> {
   }
 
   Future<void> _save() async {
-    final uploaded = _uploadedResult;
+    final successful = _successfulFiles;
     final docType = _resolvedDocType;
-    if (uploaded == null) {
+    if (successful.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Pilih foto atau file PDF dulu.')));
       return;
     }
@@ -184,9 +186,14 @@ class _DocumentFormSheetState extends ConsumerState<_DocumentFormSheet> {
         id: docRepo.newDocumentId(widget.parentType, widget.parentId),
         title: title,
         docType: docType,
-        fileUrl: uploaded.url,
-        storagePath: uploaded.storagePath,
-        fileKind: uploaded.isPdf ? DocumentFileKind.pdf : DocumentFileKind.image,
+        files: [
+          for (final f in successful)
+            DocumentFile(
+              url: f.uploaded!.url,
+              storagePath: f.uploaded!.storagePath,
+              kind: f.isPdf ? DocumentFileKind.pdf : DocumentFileKind.image,
+            ),
+        ],
         expiryDate: _expiryDate,
         createdAt: DateTime.now(),
       );
@@ -202,7 +209,7 @@ class _DocumentFormSheetState extends ConsumerState<_DocumentFormSheet> {
 
       if (mounted) Navigator.of(context).pop();
     } on AppException catch (e) {
-      if (mounted) setState(() => _uploadError = e.message);
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -225,53 +232,51 @@ class _DocumentFormSheetState extends ConsumerState<_DocumentFormSheet> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('Tambah Dokumen', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 4),
+            const Text(
+              'Boleh lebih dari satu file untuk satu dokumen — misal KTP depan & belakang.',
+              style: TextStyle(fontSize: 12, color: Colors.black54),
+            ),
             const SizedBox(height: 16),
-            if (_pickedFile == null)
-              Row(
-                children: [
-                  Expanded(
-                    child: _SourceButton(
-                      onPressed: _pickFromCamera,
-                      icon: Icons.camera_alt_rounded,
-                      label: 'Kamera',
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _SourceButton(
-                      onPressed: _pickFromGallery,
-                      icon: Icons.photo_library_rounded,
-                      label: 'Galeri',
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _SourceButton(
-                      onPressed: _pickPdf,
-                      icon: Icons.picture_as_pdf_rounded,
-                      label: 'PDF',
-                    ),
-                  ),
-                ],
-              )
-            else
-              Card(
-                color: AppColors.primaryLight,
-                child: ListTile(
-                  leading: Icon(_pickedIsPdf ? Icons.picture_as_pdf_rounded : Icons.image_rounded,
-                      color: AppColors.primary),
-                  title: Text(_pickedFile!.path.split('/').last, overflow: TextOverflow.ellipsis),
-                  subtitle: _isUploading
-                      ? LinearProgressIndicator(value: _uploadProgress)
-                      : _uploadError != null
-                          ? Text(_uploadError!, style: const TextStyle(color: AppColors.error))
-                          : null,
-                  trailing: IconButton(
-                    icon: const Icon(Icons.close_rounded),
-                    onPressed: _isSaving ? null : _removePickedFile,
-                  ),
+            Row(
+              children: [
+                Expanded(
+                  child: _SourceButton(onPressed: _pickFromCamera, icon: Icons.camera_alt_rounded, label: 'Kamera'),
                 ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child:
+                      _SourceButton(onPressed: _pickFromGallery, icon: Icons.photo_library_rounded, label: 'Galeri'),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _SourceButton(onPressed: _pickPdf, icon: Icons.picture_as_pdf_rounded, label: 'PDF'),
+                ),
+              ],
+            ),
+            if (_pickedFiles.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              MediaGrid(
+                canAddMore: false,
+                items: [
+                  for (final f in _pickedFiles)
+                    MediaGridItem(
+                      id: f.id,
+                      localFile: f.file,
+                      isPdf: f.isPdf,
+                      progress: f.uploaded != null ? null : f.progress,
+                      error: f.error,
+                      onRemove: _isSaving ? null : () => _removeFile(f),
+                    ),
+                ],
               ),
+              if (_hasErrors)
+                const Padding(
+                  padding: EdgeInsets.only(top: 8),
+                  child: Text('Hapus file yang gagal diupload sebelum menyimpan.',
+                      style: TextStyle(color: Colors.red, fontSize: 12)),
+                ),
+            ],
             const SizedBox(height: 16),
             TextField(
               controller: _titleController,
@@ -314,7 +319,7 @@ class _DocumentFormSheetState extends ConsumerState<_DocumentFormSheet> {
             SizedBox(
               width: double.infinity,
               child: FilledButton(
-                onPressed: (_isSaving || _isUploading) ? null : _save,
+                onPressed: (_isSaving || _isUploadingAny || _hasErrors) ? null : _save,
                 child: _isSaving
                     ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
                     : const Text('Simpan'),

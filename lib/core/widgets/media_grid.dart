@@ -14,6 +14,7 @@ class MediaGridItem {
     this.localFile,
     this.networkUrl,
     this.isVideo = false,
+    this.isPdf = false,
     this.progress,
     this.error,
     this.onRemove,
@@ -23,6 +24,10 @@ class MediaGridItem {
   final File? localFile;
   final String? networkUrl;
   final bool isVideo;
+
+  /// A PDF has no renderable thumbnail — shown as an icon tile instead of
+  /// attempting to decode the file as an image.
+  final bool isPdf;
 
   /// 0.0–1.0 while uploading, null once finished (or if not applicable).
   final double? progress;
@@ -76,7 +81,12 @@ class _MediaTile extends StatelessWidget {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          if (item.localFile != null)
+          if (item.isPdf)
+            const ColoredBox(
+              color: AppColors.primaryLight,
+              child: Center(child: Icon(Icons.picture_as_pdf_rounded, color: AppColors.primary, size: 32)),
+            )
+          else if (item.localFile != null)
             Image.file(item.localFile!, fit: BoxFit.cover)
           else if (item.networkUrl != null)
             CachedNetworkImage(imageUrl: item.networkUrl!, fit: BoxFit.cover)

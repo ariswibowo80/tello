@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/utils/maps_launcher.dart';
 import '../../domain/entities/family_document.dart';
+import 'document_files_sheet.dart';
 import 'document_image_viewer.dart';
 import 'document_type_style.dart';
 
@@ -13,6 +14,20 @@ class DocumentTile extends StatelessWidget {
   final FamilyDocument document;
   final VoidCallback? onDelete;
 
+  void _open(BuildContext context) {
+    if (document.files.isEmpty) return;
+    if (document.files.length > 1) {
+      showDocumentFilesSheet(context, document);
+      return;
+    }
+    final file = document.files.first;
+    if (file.kind == DocumentFileKind.pdf) {
+      openExternalLink(file.url);
+    } else {
+      showDocumentImageViewer(context, images: [file], initialIndex: 0);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final style = DocumentTypeStyle.forType(document.docType);
@@ -21,19 +36,13 @@ class DocumentTile extends StatelessWidget {
       margin: const EdgeInsets.symmetric(vertical: 4),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: () {
-          if (document.fileKind == DocumentFileKind.pdf) {
-            openExternalLink(document.fileUrl);
-          } else {
-            showDocumentImageViewer(context, url: document.fileUrl, heroTag: document.storagePath);
-          }
-        },
+        onTap: () => _open(context),
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _TypeAvatar(style: style, fileKind: document.fileKind),
+              _TypeAvatar(style: style, fileCount: document.files.length),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -46,7 +55,10 @@ class DocumentTile extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      document.docType,
+                      [
+                        document.docType,
+                        if (document.files.length > 1) '${document.files.length} file',
+                      ].join(' · '),
                       style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
                     ),
                     const SizedBox(height: 6),
@@ -68,10 +80,10 @@ class DocumentTile extends StatelessWidget {
 }
 
 class _TypeAvatar extends StatelessWidget {
-  const _TypeAvatar({required this.style, required this.fileKind});
+  const _TypeAvatar({required this.style, required this.fileCount});
 
   final DocumentTypeStyle style;
-  final DocumentFileKind fileKind;
+  final int fileCount;
 
   @override
   Widget build(BuildContext context) {
@@ -87,19 +99,21 @@ class _TypeAvatar extends StatelessWidget {
             foregroundColor: style.color,
             child: Icon(style.icon, size: 22),
           ),
-          Positioned(
-            right: -2,
-            bottom: -2,
-            child: Container(
-              padding: const EdgeInsets.all(2),
-              decoration: const BoxDecoration(color: AppColors.surface, shape: BoxShape.circle),
-              child: Icon(
-                fileKind == DocumentFileKind.pdf ? Icons.picture_as_pdf_rounded : Icons.image_rounded,
-                size: 14,
-                color: AppColors.textSecondary,
+          if (fileCount > 1)
+            Positioned(
+              right: -4,
+              bottom: -4,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                decoration: const BoxDecoration(color: AppColors.primary, shape: BoxShape.circle),
+                constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
+                child: Text(
+                  '$fileCount',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700),
+                ),
               ),
             ),
-          ),
         ],
       ),
     );
