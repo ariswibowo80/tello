@@ -16,14 +16,16 @@ import '../../domain/entities/family_document.dart';
 import '../../domain/repositories/family_document_repository.dart';
 import '../providers/family_document_providers.dart';
 
-/// Opens the "Add document" sheet for a family member or asset. Returns
-/// once the document has been uploaded and saved, or null if dismissed.
+/// Opens the "Add document" sheet for a family member or asset, or the
+/// "Edit document" sheet when [existingDocument] is passed. Returns once
+/// the document has been uploaded and saved, or null if dismissed.
 Future<void> showDocumentFormSheet(
   BuildContext context, {
   required DocumentParentType parentType,
   required String parentId,
   required String folderPath,
   required List<String> docTypePresets,
+  FamilyDocument? existingDocument,
 }) {
   return showModalBottomSheet(
     context: context,
@@ -34,18 +36,42 @@ Future<void> showDocumentFormSheet(
       parentId: parentId,
       folderPath: folderPath,
       docTypePresets: docTypePresets,
+      existingDocument: existingDocument,
     ),
   );
 }
 
 class _PickedFile {
-  _PickedFile({required this.id, required this.file, required this.isPdf});
+  _PickedFile.uploading({required this.id, required File file, required this.isPdf})
+      : file = file,
+        progress = 0,
+        uploaded = null,
+        error = null,
+        originalFile = null;
+
+  /// A file the document already had before this edit session — "upload"
+  /// is already done, so it behaves like a finished [_PickedFile] from
+  /// the moment it's added to the list.
+  _PickedFile.existing(DocumentFile existing)
+      : id = existing.storagePath,
+        file = null,
+        isPdf = existing.kind == DocumentFileKind.pdf,
+        progress = 1,
+        uploaded = DocumentUploadResult(url: existing.url, storagePath: existing.storagePath, isPdf: existing.kind == DocumentFileKind.pdf),
+        error = null,
+        originalFile = existing;
+
   final String id;
-  final File file;
+  final File? file;
   final bool isPdf;
-  double progress = 0;
+  double progress;
   DocumentUploadResult? uploaded;
   String? error;
+
+  /// Non-null for a file that existed on the document before this edit
+  /// session — tells [_removeFile] to defer deleting it from Storage
+  /// until the edit is actually saved, rather than right away.
+  final DocumentFile? originalFile;
 }
 
 class _DocumentFormSheet extends ConsumerStatefulWidget {
@@ -54,12 +80,14 @@ class _DocumentFormSheet extends ConsumerStatefulWidget {
     required this.parentId,
     required this.folderPath,
     required this.docTypePresets,
+    this.existingDocument,
   });
 
   final DocumentParentType parentType;
   final String parentId;
   final String folderPath;
   final List<String> docTypePresets;
+  final FamilyDocument? existingDocument;
 
   @override
   ConsumerState<_DocumentFormSheet> createState() => _DocumentFormSheetState();
@@ -71,7 +99,27 @@ class _DocumentFormSheetState extends ConsumerState<_DocumentFormSheet> {
   String? _docType;
   DateTime? _expiryDate;
   final List<_PickedFile> _pickedFiles = [];
+  final List<DocumentFile> _filesToDeleteOnSave = [];
   bool _isSaving = false;
+
+  bool get _isEditing => widget.existingDocument != null;
+
+  @override
+  void initState() {
+    super.initState();
+    final existing = widget.existingDocument;
+    if (existing != null) {
+      _titleController.text = existing.title;
+      _expiryDate = existing.expiryDate;
+      if (widget.docTypePresets.contains(existing.docType)) {
+        _docType = existing.docType;
+      } else {
+        _docType = _otherPreset;
+        _customTypeController.text = existing.docType;
+      }
+      _pickedFiles.addAll(existing.files.map(_PickedFile.existing));
+    }
+  }
 
   @override
   void dispose() {
@@ -122,7 +170,7 @@ class _DocumentFormSheetState extends ConsumerState<_DocumentFormSheet> {
   /// deadlock: the button would stay disabled forever because nothing
   /// had kicked off the work that clears that state.
   void _startUpload(File file, {required bool isPdf}) {
-    final entry = _PickedFile(id: const Uuid().v4(), file: file, isPdf: isPdf);
+    final entry = _PickedFile.uploading(id: const Uuid().v4(), file: file, isPdf: isPdf);
     setState(() => _pickedFiles.add(entry));
 
     final storage = ref.read(storageServiceProvider);
@@ -146,9 +194,15 @@ class _DocumentFormSheetState extends ConsumerState<_DocumentFormSheet> {
 
   void _removeFile(_PickedFile entry) {
     setState(() => _pickedFiles.remove(entry));
-    // Best-effort cleanup if the upload already finished — nothing else
-    // references this file since it was never attached to a saved
-    // FamilyDocument.
+    if (entry.originalFile != null) {
+      // Was already on the saved document — only actually delete it from
+      // Storage once the edit is saved, so backing out of the sheet
+      // without saving doesn't lose anything.
+      _filesToDeleteOnSave.add(entry.originalFile!);
+      return;
+    }
+    // Picked and uploaded during this session, then removed before
+    // saving — nothing else references this file, safe to clean up now.
     final uploaded = entry.uploaded;
     if (uploaded != null) {
       ref.read(storageServiceProvider).deleteMedia(uploaded.storagePath);
@@ -181,9 +235,10 @@ class _DocumentFormSheetState extends ConsumerState<_DocumentFormSheet> {
 
     try {
       final docRepo = ref.read(familyDocumentRepositoryProvider);
+      final existing = widget.existingDocument;
       final title = _titleController.text.trim().isEmpty ? docType : _titleController.text.trim();
       final document = FamilyDocument(
-        id: docRepo.newDocumentId(widget.parentType, widget.parentId),
+        id: existing?.id ?? docRepo.newDocumentId(widget.parentType, widget.parentId),
         title: title,
         docType: docType,
         files: [
@@ -195,10 +250,23 @@ class _DocumentFormSheetState extends ConsumerState<_DocumentFormSheet> {
             ),
         ],
         expiryDate: _expiryDate,
-        createdAt: DateTime.now(),
+        createdAt: existing?.createdAt ?? DateTime.now(),
       );
-      await docRepo.createDocument(widget.parentType, widget.parentId, document);
 
+      if (_isEditing) {
+        await docRepo.updateDocument(widget.parentType, widget.parentId, document);
+      } else {
+        await docRepo.createDocument(widget.parentType, widget.parentId, document);
+      }
+
+      for (final removed in _filesToDeleteOnSave) {
+        await ref.read(storageServiceProvider).deleteMedia(removed.storagePath);
+      }
+
+      // Re-schedule from scratch regardless of whether the expiry date
+      // actually changed — cancel is a no-op if nothing was scheduled,
+      // and this is simpler than diffing old vs new expiry dates.
+      await NotificationService.instance.cancelDocumentExpiryReminders(document.id);
       if (_expiryDate != null) {
         await NotificationService.instance.scheduleDocumentExpiryReminders(
           documentId: document.id,
@@ -231,7 +299,7 @@ class _DocumentFormSheetState extends ConsumerState<_DocumentFormSheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Tambah Dokumen', style: Theme.of(context).textTheme.titleLarge),
+            Text(_isEditing ? 'Edit Dokumen' : 'Tambah Dokumen', style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 4),
             const Text(
               'Boleh lebih dari satu file untuk satu dokumen — misal KTP depan & belakang.',
@@ -263,6 +331,7 @@ class _DocumentFormSheetState extends ConsumerState<_DocumentFormSheet> {
                     MediaGridItem(
                       id: f.id,
                       localFile: f.file,
+                      networkUrl: f.file == null ? f.uploaded?.url : null,
                       isPdf: f.isPdf,
                       progress: f.uploaded != null ? null : f.progress,
                       error: f.error,

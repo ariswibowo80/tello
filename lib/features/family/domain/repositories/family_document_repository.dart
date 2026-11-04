@@ -15,5 +15,11 @@ abstract class FamilyDocumentRepository {
     FamilyDocument document,
   );
 
+  Future<void> updateDocument(
+    DocumentParentType parentType,
+    String parentId,
+    FamilyDocument document,
+  );
+
   Future<void> deleteDocument(DocumentParentType parentType, String parentId, String documentId);
 }

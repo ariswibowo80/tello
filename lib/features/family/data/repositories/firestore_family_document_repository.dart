@@ -66,6 +66,24 @@ class FirestoreFamilyDocumentRepository implements FamilyDocumentRepository {
   }
 
   @override
+  Future<void> updateDocument(
+    DocumentParentType parentType,
+    String parentId,
+    FamilyDocument document,
+  ) async {
+    try {
+      // toFirestore() stamps a fresh createdAt, which is correct for
+      // createDocument but would wipe the original creation date on an
+      // edit — drop it so `update` only touches the fields that actually
+      // changed.
+      final data = document.toFirestore()..remove('createdAt');
+      await _documentsRef(parentType, parentId).doc(document.id).update(data);
+    } on FirebaseException catch (e) {
+      throw mapFirebaseErrorCode(e.code, cause: e);
+    }
+  }
+
+  @override
   Future<void> deleteDocument(DocumentParentType parentType, String parentId, String documentId) async {
     try {
       await _documentsRef(parentType, parentId).doc(documentId).delete();

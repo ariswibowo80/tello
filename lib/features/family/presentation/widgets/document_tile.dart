@@ -9,9 +9,10 @@ import 'document_image_viewer.dart';
 import 'document_type_style.dart';
 
 class DocumentTile extends StatelessWidget {
-  const DocumentTile({super.key, required this.document, this.onDelete});
+  const DocumentTile({super.key, required this.document, this.onEdit, this.onDelete});
 
   final FamilyDocument document;
+  final VoidCallback? onEdit;
   final VoidCallback? onDelete;
 
   void _open(BuildContext context) {
@@ -66,6 +67,11 @@ class DocumentTile extends StatelessWidget {
                   ],
                 ),
               ),
+              if (onEdit != null)
+                IconButton(
+                  icon: const Icon(Icons.edit_outlined, color: AppColors.textSecondary),
+                  onPressed: onEdit,
+                ),
               if (onDelete != null)
                 IconButton(
                   icon: const Icon(Icons.delete_outline_rounded, color: AppColors.error),

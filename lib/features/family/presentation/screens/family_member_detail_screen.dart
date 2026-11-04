@@ -56,6 +56,19 @@ class FamilyMemberDetailScreen extends ConsumerWidget {
     }
   }
 
+  void _editDocument(BuildContext context, WidgetRef ref, String memberId, FamilyDocument document) {
+    final householdId = ref.read(householdIdProvider).valueOrNull;
+    if (householdId == null) return;
+    showDocumentFormSheet(
+      context,
+      parentType: DocumentParentType.familyMember,
+      parentId: memberId,
+      folderPath: StoragePaths.familyMemberFiles(householdId, memberId),
+      docTypePresets: DocumentTypePresets.member,
+      existingDocument: document,
+    );
+  }
+
   Future<void> _deleteMember(BuildContext context, WidgetRef ref, FamilyMember member) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -194,7 +207,11 @@ class FamilyMemberDetailScreen extends ConsumerWidget {
                   return Column(
                     children: [
                       for (final doc in documents)
-                        DocumentTile(document: doc, onDelete: () => _deleteDocument(context, ref, doc)),
+                        DocumentTile(
+                          document: doc,
+                          onEdit: () => _editDocument(context, ref, member.id, doc),
+                          onDelete: () => _deleteDocument(context, ref, doc),
+                        ),
                     ],
                   );
                 },

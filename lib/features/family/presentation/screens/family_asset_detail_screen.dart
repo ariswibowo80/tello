@@ -56,6 +56,19 @@ class FamilyAssetDetailScreen extends ConsumerWidget {
     }
   }
 
+  void _editDocument(BuildContext context, WidgetRef ref, String assetId, FamilyDocument document) {
+    final householdId = ref.read(householdIdProvider).valueOrNull;
+    if (householdId == null) return;
+    showDocumentFormSheet(
+      context,
+      parentType: DocumentParentType.familyAsset,
+      parentId: assetId,
+      folderPath: StoragePaths.familyAssetFiles(householdId, assetId),
+      docTypePresets: DocumentTypePresets.asset,
+      existingDocument: document,
+    );
+  }
+
   Future<void> _deleteAsset(BuildContext context, WidgetRef ref, FamilyAsset asset) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -201,7 +214,11 @@ class FamilyAssetDetailScreen extends ConsumerWidget {
                   return Column(
                     children: [
                       for (final doc in documents)
-                        DocumentTile(document: doc, onDelete: () => _deleteDocument(context, ref, doc)),
+                        DocumentTile(
+                          document: doc,
+                          onEdit: () => _editDocument(context, ref, asset.id, doc),
+                          onDelete: () => _deleteDocument(context, ref, doc),
+                        ),
                     ],
                   );
                 },
